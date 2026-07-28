@@ -1,0 +1,11 @@
+.env
+.git
+.venv
+.venv*
+__pycache__
+*.py[cod]
+*.egg-info
+build
+dist
+for-voice.pem
+.DS_Store

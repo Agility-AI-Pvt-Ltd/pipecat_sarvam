@@ -1,0 +1,13 @@
+.env
+.venv/
+.venv311/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+.pem
+futurexfeazer.pem
+for-voice.pem
