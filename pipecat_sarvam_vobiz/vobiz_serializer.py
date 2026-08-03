@@ -38,6 +38,7 @@ class VobizFrameSerializer(FrameSerializer):
         self._params: VobizFrameSerializer.InputParams = params
         self._stream_id: str | None = None
         self._call_id: str | None = None
+        self._account_id: str | None = None
         self._vobiz_sample_rate = params.stream_sample_rate
         self._vobiz_encoding = params.stream_encoding
         self._sample_rate = params.sample_rate or params.stream_sample_rate
@@ -89,6 +90,12 @@ class VobizFrameSerializer(FrameSerializer):
         if isinstance(frame, (OutputTransportMessageFrame, OutputTransportMessageUrgentFrame)):
             if self.should_ignore_frame(frame):
                 return None
+            if (
+                isinstance(frame.message, dict)
+                and frame.message.get("event") == "sarvamSTT"
+                and self._account_id != "browser-test"
+            ):
+                return None
             return json.dumps(frame.message)
 
         return None
@@ -106,6 +113,7 @@ class VobizFrameSerializer(FrameSerializer):
             media_format = start.get("mediaFormat") or {}
             self._stream_id = start.get("streamId") or message.get("streamId")
             self._call_id = start.get("callId")
+            self._account_id = start.get("accountId")
             self._vobiz_encoding = media_format.get("encoding") or self._vobiz_encoding
             self._vobiz_sample_rate = int(media_format.get("sampleRate") or self._vobiz_sample_rate)
             print(

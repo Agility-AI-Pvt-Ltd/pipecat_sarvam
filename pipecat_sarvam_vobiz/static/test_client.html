@@ -131,6 +131,43 @@
         letter-spacing: 0;
       }
 
+      .stt {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin: 0 0 14px;
+      }
+
+      .stt-box {
+        min-height: 82px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: #111715;
+      }
+
+      .stt-box span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .stt-box strong {
+        display: block;
+        margin-top: 6px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 16px;
+        line-height: 1.35;
+        letter-spacing: 0;
+      }
+
+      .raw-title {
+        margin: 0 0 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
       pre {
         height: min(46vh, 420px);
         margin: 0;
@@ -146,6 +183,11 @@
         line-height: 1.5;
       }
 
+      #sttRaw {
+        height: min(28vh, 220px);
+        margin-bottom: 14px;
+      }
+
       @media (max-width: 720px) {
         .controls {
           grid-template-columns: 1fr;
@@ -153,6 +195,10 @@
 
         .stats {
           grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .stt {
+          grid-template-columns: 1fr;
         }
       }
     </style>
@@ -175,6 +221,12 @@
           <div class="stat"><span>Sent Frames</span><strong id="sent">0</strong></div>
           <div class="stat"><span>Received Audio</span><strong id="received">0</strong></div>
         </div>
+        <div class="stt">
+          <div class="stt-box"><span>Sarvam STT Partial</span><strong id="sttPartial">-</strong></div>
+          <div class="stt-box"><span>Sarvam STT Final</span><strong id="sttFinal">-</strong></div>
+        </div>
+        <div class="raw-title">Sarvam STT Raw Result</div>
+        <pre id="sttRaw"></pre>
         <pre id="log"></pre>
       </section>
     </main>
@@ -192,6 +244,9 @@
         rate: document.getElementById("rate"),
         sent: document.getElementById("sent"),
         received: document.getElementById("received"),
+        sttPartial: document.getElementById("sttPartial"),
+        sttFinal: document.getElementById("sttFinal"),
+        sttRaw: document.getElementById("sttRaw"),
         log: document.getElementById("log"),
       };
 
@@ -433,6 +488,11 @@
           return;
         }
 
+        if (message.event === "sarvamSTT" && message.stt) {
+          showSarvamStt(message.stt);
+          return;
+        }
+
         if (message.event === "clearAudio") {
           state.playbackTime = state.audioContext.currentTime;
           log("received clearAudio");
@@ -446,6 +506,18 @@
         }
 
         log(`received ${message.event || "message"}`);
+      }
+
+      function showSarvamStt(stt) {
+        const text = stt.text || "";
+        if (stt.kind === "partial") {
+          elements.sttPartial.textContent = text || "-";
+        } else {
+          elements.sttFinal.textContent = text || "-";
+          elements.sttPartial.textContent = "-";
+        }
+        elements.sttRaw.textContent = JSON.stringify(stt, null, 2);
+        log(`sarvam STT ${stt.kind || "data"}: ${text || "(empty)"}`);
       }
 
       function playAudioMessage(media) {
@@ -573,6 +645,9 @@
         state.pcmQueue = new Uint8Array(0);
         elements.sent.textContent = "0";
         elements.received.textContent = "0";
+        elements.sttPartial.textContent = "-";
+        elements.sttFinal.textContent = "-";
+        elements.sttRaw.textContent = "";
         elements.log.textContent = "";
       }
 
