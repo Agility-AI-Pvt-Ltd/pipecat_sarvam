@@ -76,9 +76,9 @@ Hindi/English callers.
 | `PUBLIC_BASE_URL` | derived from request | Public HTTPS base URL used to build the Vobiz WebSocket URL. Use this with ngrok/cloudflared. |
 | `VOBIZ_WS_URL` | derived from `PUBLIC_BASE_URL` | Full `wss://.../vobiz/ws` override. |
 | `VOBIZ_STREAM_CONTENT_TYPE` | `audio/x-l16;rate=16000` | Vobiz stream format. Also accepts `audio/x-mulaw;rate=8000`. |
-| `SARVAM_LANGUAGE` | unset | Optional Pipecat language enum name like `HI_IN`, `EN_IN`, `TA_IN`. Leave unset for auto-detect. |
+| `SARVAM_LANGUAGE` | unset | Currently pinned to Hindi in code with `Language.HI_IN` for testing. |
 | `SARVAM_MODE` | `transcribe` | `saaras:v3` mode: `transcribe`, `translate`, `verbatim`, `translit`, or `codemix`. |
-| `SARVAM_VAD_SIGNALS` | `true` | Use Sarvam server-side VAD signals. |
+| `SARVAM_VAD_SIGNALS` | `false` | Currently forced off in code so Pipecat local Silero VAD drives STT flushing. |
 | `SARVAM_TTS_MODEL` | `bulbul:v3` | Sarvam streaming TTS model. |
 | `SARVAM_TTS_VOICE` | `shubh` | Sarvam speaker voice. |
 | `SARVAM_TTS_LANGUAGE` | `hi-IN` | TTS language code. |

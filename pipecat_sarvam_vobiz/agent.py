@@ -4,6 +4,7 @@ import os
 
 from fastapi import WebSocket
 
+from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -44,16 +45,7 @@ def build_sarvam_stt(settings: Settings) -> SarvamSTTService:
         settings=SarvamSTTService.Settings(
             model="saaras:v3",
             language=Language.HI_IN,
-            vad_signals=settings.sarvam_vad_signals,
-            high_vad_sensitivity=True,
-            positive_speech_threshold=float(os.getenv("SARVAM_POSITIVE_SPEECH_THRESHOLD", "0.55")),
-            negative_speech_threshold=float(os.getenv("SARVAM_NEGATIVE_SPEECH_THRESHOLD", "0.35")),
-            min_speech_frames=int(os.getenv("SARVAM_MIN_SPEECH_FRAMES", "3")),
-            first_turn_min_speech_frames=int(os.getenv("SARVAM_FIRST_TURN_MIN_SPEECH_FRAMES", "2")),
-            negative_frames_count=int(os.getenv("SARVAM_NEGATIVE_FRAMES_COUNT", "5")),
-            negative_frames_window=int(os.getenv("SARVAM_NEGATIVE_FRAMES_WINDOW", "8")),
-            pre_speech_pad_frames=int(os.getenv("SARVAM_PRE_SPEECH_PAD_FRAMES", "3")),
-            interrupt_min_speech_frames=int(os.getenv("SARVAM_INTERRUPT_MIN_SPEECH_FRAMES", "2")),
+            vad_signals=False,
         ),
     )
 
@@ -119,7 +111,10 @@ async def run_vobiz_agent(websocket: WebSocket, settings: Settings) -> None:
     context = LLMContext()
     context_aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(user_turn_stop_timeout=0.5),
+        user_params=LLMUserAggregatorParams(
+            user_turn_stop_timeout=0.5,
+            vad_analyzer=SileroVADAnalyzer(sample_rate=settings.stream_sample_rate),
+        ),
         assistant_params=LLMAssistantAggregatorParams(),
     )
 
