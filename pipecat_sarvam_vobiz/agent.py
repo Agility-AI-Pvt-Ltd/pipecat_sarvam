@@ -18,6 +18,7 @@ from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.transcriptions.language import Language
+from pipecat.turns.user_mute import AlwaysUserMuteStrategy
 
 try:
     from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
@@ -113,6 +114,7 @@ async def run_vobiz_agent(websocket: WebSocket, settings: Settings) -> None:
         context,
         user_params=LLMUserAggregatorParams(
             user_turn_stop_timeout=0.5,
+            user_mute_strategies=[AlwaysUserMuteStrategy()],
             vad_analyzer=SileroVADAnalyzer(sample_rate=settings.stream_sample_rate),
         ),
         assistant_params=LLMAssistantAggregatorParams(),
@@ -141,6 +143,7 @@ async def run_vobiz_agent(websocket: WebSocket, settings: Settings) -> None:
     )
     task = PipelineTask(
         pipeline,
+        idle_timeout_secs=None,
         params=PipelineParams(
             audio_in_sample_rate=settings.stream_sample_rate,
             audio_out_sample_rate=settings.stream_sample_rate,
