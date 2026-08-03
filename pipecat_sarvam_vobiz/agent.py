@@ -16,6 +16,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.services.sarvam.tts import SarvamTTSService
+from pipecat.transcriptions.language import Language
 
 try:
     from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
@@ -31,14 +32,6 @@ from pipecat_sarvam_vobiz.transcript_logger import TerminalOpenAILogger, Termina
 from pipecat_sarvam_vobiz.vobiz_serializer import VobizFrameSerializer
 
 
-def _language_from_env(language_name: str | None):
-    if not language_name:
-        return None
-    from pipecat.transcriptions.language import Language
-
-    return getattr(Language, language_name)
-
-
 def build_sarvam_stt(settings: Settings) -> SarvamSTTService:
     if not settings.sarvam_api_key:
         raise RuntimeError("SARVAM_API_KEY is required")
@@ -50,7 +43,7 @@ def build_sarvam_stt(settings: Settings) -> SarvamSTTService:
         mode=settings.sarvam_mode,
         settings=SarvamSTTService.Settings(
             model="saaras:v3",
-            language=_language_from_env(settings.sarvam_language),
+            language=Language.HI_IN,
             vad_signals=settings.sarvam_vad_signals,
             high_vad_sensitivity=True,
             positive_speech_threshold=float(os.getenv("SARVAM_POSITIVE_SPEECH_THRESHOLD", "0.55")),
