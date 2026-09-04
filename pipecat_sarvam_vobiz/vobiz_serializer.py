@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from loguru import logger
@@ -32,10 +33,22 @@ class VobizFrameSerializer(FrameSerializer):
         include_stream_id_on_play_audio: bool = True
         resampler_clear_after_secs: float = Field(default=10.0, ge=0.0)
 
-    def __init__(self, params: InputParams | None = None):
+    def __init__(
+        self,
+        params: InputParams | None = None,
+        on_start: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    ):
+        """`on_start` fires once, when Vobiz sends the `start` event.
+
+        That event is the first moment this process knows the call's real
+        identity, and it only arrives when the customer has actually answered —
+        which makes it the signal the CRM needs, since Vobiz's own `StartApp`
+        callback goes to the answer URL rather than to the CRM.
+        """
         params = params or VobizFrameSerializer.InputParams()
         super().__init__(params=params)
         self._params: VobizFrameSerializer.InputParams = params
+        self._on_start = on_start
         self._stream_id: str | None = None
         self._call_id: str | None = None
         self._account_id: str | None = None
@@ -125,6 +138,19 @@ class VobizFrameSerializer(FrameSerializer):
                 ),
                 flush=True,
             )
+            if self._on_start is not None:
+                try:
+                    await self._on_start(
+                        {
+                            "stream_id": self._stream_id,
+                            "call_id": self._call_id,
+                            "account_id": self._account_id,
+                        }
+                    )
+                except Exception as exc:  # pragma: no cover - reporting is best-effort
+                    # A CRM that is down must not stop a call that is already
+                    # connected. The customer is on the line either way.
+                    logger.warning("Vobiz start hook failed: {}", exc)
             return None
 
         if event == "playedStream":

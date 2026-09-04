@@ -222,10 +222,10 @@
           <div class="stat"><span>Received Audio</span><strong id="received">0</strong></div>
         </div>
         <div class="stt">
-          <div class="stt-box"><span>Sarvam STT Partial</span><strong id="sttPartial">-</strong></div>
-          <div class="stt-box"><span>Sarvam STT Final</span><strong id="sttFinal">-</strong></div>
+          <div class="stt-box"><span>Input Transcript Partial</span><strong id="sttPartial">-</strong></div>
+          <div class="stt-box"><span>Input Transcript Final</span><strong id="sttFinal">-</strong></div>
         </div>
-        <div class="raw-title">Sarvam STT Raw Result</div>
+        <div class="raw-title">Input Transcript Raw Result</div>
         <pre id="sttRaw"></pre>
         <pre id="log"></pre>
       </section>
@@ -517,7 +517,7 @@
           elements.sttPartial.textContent = "-";
         }
         elements.sttRaw.textContent = JSON.stringify(stt, null, 2);
-        log(`sarvam STT ${stt.kind || "data"}: ${text || "(empty)"}`);
+        log(`${stt.source || "STT"} ${stt.kind || "data"}: ${text || "(empty)"}`);
       }
 
       function playAudioMessage(media) {

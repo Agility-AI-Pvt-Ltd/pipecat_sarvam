@@ -24,10 +24,19 @@ def _json_safe(value: Any) -> Any:
 
 
 class TerminalTranscriptLogger(FrameProcessor):
-    """Print streaming STT text to the terminal while keeping frames flowing."""
+    """Print streaming STT text to the terminal while keeping frames flowing.
 
-    def __init__(self) -> None:
+    Also feeds finalised customer turns to the call's `CallSession` when one is
+    supplied, which is how the transcript reaches the CRM. Only `Transcription-`
+    `Frame` is recorded, never the interim frames: partials are revised as the
+    customer keeps talking, so recording them would store every draft of a
+    sentence alongside its final form.
+    """
+
+    def __init__(self, source: str = "sarvam", session: object | None = None) -> None:
         super().__init__(name="terminal-transcript-logger")
+        self._source = source
+        self._session = session
         self._last_partial_len = 0
 
     async def _push_stt_debug(
@@ -42,6 +51,7 @@ class TerminalTranscriptLogger(FrameProcessor):
                     "event": "sarvamSTT",
                     "stt": {
                         "kind": kind,
+                        "source": self._source,
                         "text": frame.text,
                         "language": str(frame.language) if frame.language else None,
                         "timestamp": frame.timestamp,
@@ -51,7 +61,7 @@ class TerminalTranscriptLogger(FrameProcessor):
                     },
                 }
             ),
-            direction,
+            FrameDirection.DOWNSTREAM,
         )
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -68,6 +78,8 @@ class TerminalTranscriptLogger(FrameProcessor):
             await self._push_stt_debug("final", frame, direction)
             text = frame.text.strip()
             if text:
+                if self._session is not None:
+                    self._session.record("user", text)
                 if self._last_partial_len:
                     print()
                     self._last_partial_len = 0
@@ -77,10 +89,15 @@ class TerminalTranscriptLogger(FrameProcessor):
 
 
 class TerminalOpenAILogger(FrameProcessor):
-    """Print streaming OpenAI assistant text before it is sent to TTS."""
+    """Print streaming OpenAI assistant text before it is sent to TTS.
 
-    def __init__(self) -> None:
+    The assistant side of the transcript is recorded here, at the end of each
+    response rather than per fragment, so the CRM stores whole replies.
+    """
+
+    def __init__(self, session: object | None = None) -> None:
         super().__init__(name="terminal-openai-logger")
+        self._session = session
         self._chunks: list[str] = []
         self._streaming = False
 
@@ -105,6 +122,8 @@ class TerminalOpenAILogger(FrameProcessor):
                 print()
                 if full_text:
                     print(f"[openai final] {full_text}", flush=True)
+                    if self._session is not None:
+                        self._session.record("assistant", full_text)
             self._chunks = []
             self._streaming = False
 

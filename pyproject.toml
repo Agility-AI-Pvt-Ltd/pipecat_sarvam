@@ -1,7 +1,7 @@
 [project]
 name = "pipecat-sarvam-vobiz"
 version = "0.1.0"
-description = "FastAPI voice agent using Vobiz realtime audio streams, Pipecat, and Sarvam STT."
+description = "FastAPI voice agent using Vobiz realtime audio streams, Pipecat, and OpenAI Realtime."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
