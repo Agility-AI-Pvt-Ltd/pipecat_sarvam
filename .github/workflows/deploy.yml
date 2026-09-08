@@ -1,0 +1,63 @@
+name: CI and production deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipecat-sarvam-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Snapshot .env so CI cannot replace it
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT || 22 }}
+          script: |
+            set -Eeuo pipefail
+            dest="${{ secrets.DEPLOY_PATH }}"
+            rm -f /tmp/pipecat-sarvam.env.ci-keep
+            if [[ -f "$dest/.env" ]]; then
+              cp -a "$dest/.env" /tmp/pipecat-sarvam.env.ci-keep
+            fi
+      - name: Upload release source
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT || 22 }}
+          rm: false
+          source: '.,!.git,!.env,!.venv,!.venv311,!for-voice.pem,!*.pem,!graphify-out,!__pycache__,!*.pyc'
+          target: ${{ secrets.DEPLOY_PATH }}
+      - name: Restore .env and deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT || 22 }}
+          command_timeout: 20m
+          script: |
+            set -Eeuo pipefail
+            dest="${{ secrets.DEPLOY_PATH }}"
+            cd "$dest"
+            if [[ -f /tmp/pipecat-sarvam.env.ci-keep ]]; then
+              cp -a /tmp/pipecat-sarvam.env.ci-keep "$dest/.env"
+              rm -f /tmp/pipecat-sarvam.env.ci-keep
+            fi
+            chmod +x scripts/deploy-prod.sh
+            ./scripts/deploy-prod.sh
