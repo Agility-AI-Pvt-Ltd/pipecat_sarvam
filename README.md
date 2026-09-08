@@ -34,9 +34,10 @@ docker compose up -d --build
 docker compose logs -f voice-agent
 ```
 
-The service listens on host port `8000`. For EC2, make sure the instance
-security group allows inbound TCP `8000` from the callers/testers that need to
-reach `/vobiz/answer` and `/vobiz/ws`.
+The service listens on host port `8100` (container port 8000). CRM's API
+already binds 8000 on the shared EC2. For that host, make sure the security
+group allows inbound TCP `8100` from the callers/testers that need to
+reach `/vobiz/answer` and `/vobiz/ws`. Point ngrok at `8100`, not 8000.
 
 Configure Vobiz:
 

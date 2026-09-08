@@ -8,13 +8,14 @@ if [[ ! -f .env ]]; then
 fi
 
 compose=(docker compose)
+host_port="${VOICE_AGENT_HOST_PORT:-8100}"
 
 "${compose[@]}" up -d --build --force-recreate
 
 for attempt in {1..18}; do
-  if curl --fail --silent --show-error http://127.0.0.1:8000/health >/dev/null; then
+  if curl --fail --silent --show-error "http://127.0.0.1:${host_port}/health" >/dev/null; then
     "${compose[@]}" ps
-    echo "Deployment succeeded."
+    echo "Deployment succeeded. Voice agent is on host port ${host_port}."
     exit 0
   fi
   sleep 5

@@ -6,8 +6,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # Host 8100: CRM's API already owns 8000 on the shared EC2.
+    # Inside the container the app still listens on 8000.
     ports:
-      - "8000:8000"
+      - "${VOICE_AGENT_HOST_PORT:-8100}:8000"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 30s
