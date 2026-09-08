@@ -12,65 +12,47 @@ concurrency:
   group: pipecat-sarvam-production
   cancel-in-progress: false
 
-# Secrets live on THIS repo (Agility-AI-Pvt-Ltd/pipecat_sarvam), not on bcrm-backend.
-# Because this job uses `environment: production`, add them under
-# Settings → Environments → production (or as repository secrets).
+# GitHub holds only SSH deploy credentials. App config (.env) lives on the EC2
+# box and is never uploaded, downloaded, or overwritten by this workflow.
 #
-# Required:
+# Repository secrets (the names already in this repo):
 #   EC2_HOST
 #   EC2_USER
-#   EC2_SSH_PRIVATE_KEY   (alias: EC2_SSH_KEY) — the PEM body, including BEGIN/END lines
-#   DEPLOY_PATH           (alias: EC2_APP_DIR) — /home/ubuntu/pipecat_sarvam
-# Optional:
-#   EC2_SSH_PORT          (defaults to 22)
-#
-# GitHub *variables* are ignored here. appleboy only reads `secrets.*`.
+#   EC2_SSH_KEY
+#   EC2_APP_DIR     → /home/ubuntu/pipecat_sarvam
+# Optional: EC2_SSH_PORT (defaults to 22)
 
 jobs:
   deploy:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: production
-    env:
-      EC2_HOST: ${{ secrets.EC2_HOST }}
-      EC2_USER: ${{ secrets.EC2_USER }}
-      EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY || secrets.EC2_SSH_KEY }}
-      EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT || '22' }}
-      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || secrets.EC2_APP_DIR }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Check deploy secrets
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY || secrets.EC2_SSH_PRIVATE_KEY }}
+          EC2_APP_DIR: ${{ secrets.EC2_APP_DIR || secrets.DEPLOY_PATH }}
         run: |
           missing=0
-          if [[ -z "$EC2_HOST" ]]; then
-            echo "::error::Missing secret EC2_HOST"
-            missing=1
-          fi
-          if [[ -z "$EC2_USER" ]]; then
-            echo "::error::Missing secret EC2_USER"
-            missing=1
-          fi
-          if [[ -z "$EC2_SSH_PRIVATE_KEY" ]]; then
-            echo "::error::Missing SSH key. Set EC2_SSH_PRIVATE_KEY (or EC2_SSH_KEY) as a GitHub *secret* on this repository or the production environment. A variable named EC2_APP_DIR is not the key."
-            missing=1
-          fi
-          if [[ -z "$DEPLOY_PATH" ]]; then
-            echo "::error::Missing secret DEPLOY_PATH (or EC2_APP_DIR). Expected /home/ubuntu/pipecat_sarvam"
-            missing=1
-          fi
+          [[ -n "$EC2_HOST" ]] || { echo "::error::Missing secret EC2_HOST"; missing=1; }
+          [[ -n "$EC2_USER" ]] || { echo "::error::Missing secret EC2_USER"; missing=1; }
+          [[ -n "$EC2_SSH_KEY" ]] || { echo "::error::Missing secret EC2_SSH_KEY"; missing=1; }
+          [[ -n "$EC2_APP_DIR" ]] || { echo "::error::Missing secret EC2_APP_DIR"; missing=1; }
           exit "$missing"
 
-      - name: Snapshot .env so CI cannot replace it
+      - name: Snapshot host .env so this job cannot replace it
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ env.EC2_HOST }}
-          username: ${{ env.EC2_USER }}
-          key: ${{ env.EC2_SSH_PRIVATE_KEY }}
-          port: ${{ env.EC2_SSH_PORT }}
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY || secrets.EC2_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT || 22 }}
           script: |
             set -Eeuo pipefail
-            dest="${{ env.DEPLOY_PATH }}"
+            dest="${{ secrets.EC2_APP_DIR || secrets.DEPLOY_PATH }}"
             rm -f /tmp/pipecat-sarvam.env.ci-keep
             if [[ -f "$dest/.env" ]]; then
               cp -a "$dest/.env" /tmp/pipecat-sarvam.env.ci-keep
@@ -79,29 +61,33 @@ jobs:
       - name: Upload release source
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ env.EC2_HOST }}
-          username: ${{ env.EC2_USER }}
-          key: ${{ env.EC2_SSH_PRIVATE_KEY }}
-          port: ${{ env.EC2_SSH_PORT }}
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY || secrets.EC2_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT || 22 }}
           rm: false
+          # .env is excluded: OPENAI_API_KEY and friends stay on the box.
           source: '.,!.git,!.env,!.venv,!.venv311,!for-voice.pem,!*.pem,!graphify-out,!__pycache__,!*.pyc'
-          target: ${{ env.DEPLOY_PATH }}
+          target: ${{ secrets.EC2_APP_DIR || secrets.DEPLOY_PATH }}
 
-      - name: Restore .env and deploy
+      - name: Restore host .env and deploy
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ env.EC2_HOST }}
-          username: ${{ env.EC2_USER }}
-          key: ${{ env.EC2_SSH_PRIVATE_KEY }}
-          port: ${{ env.EC2_SSH_PORT }}
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY || secrets.EC2_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT || 22 }}
           command_timeout: 20m
           script: |
             set -Eeuo pipefail
-            dest="${{ env.DEPLOY_PATH }}"
+            dest="${{ secrets.EC2_APP_DIR || secrets.DEPLOY_PATH }}"
             cd "$dest"
             if [[ -f /tmp/pipecat-sarvam.env.ci-keep ]]; then
               cp -a /tmp/pipecat-sarvam.env.ci-keep "$dest/.env"
               rm -f /tmp/pipecat-sarvam.env.ci-keep
+            elif [[ ! -f .env ]]; then
+              echo "No .env on this host. Paste it at $dest/.env once, then re-run." >&2
+              exit 1
             fi
             chmod +x scripts/deploy-prod.sh
             ./scripts/deploy-prod.sh
