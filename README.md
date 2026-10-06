@@ -1,9 +1,11 @@
-# Pipecat + OpenAI Realtime + Vobiz Voice Agent
+# Pipecat + Sarvam + Vobiz Voice Agent
 
 FastAPI service for a live Vobiz call stream. It answers calls with Vobiz XML,
-opens a realtime WebSocket stream, sends caller audio into Pipecat, and uses
-OpenAI Realtime for speech-to-speech reasoning, turn detection, barge-in, and
-audio output back to the caller through Vobiz `playAudio`.
+opens a realtime WebSocket stream and runs each call through a Pipecat cascade:
+Sarvam streaming speech-to-text, an LLM behind any OpenAI-compatible gateway
+(OpenRouter by default), and Sarvam streaming text-to-speech back to the caller
+through Vobiz `playAudio`. Turn-taking and barge-in are decided locally by Silero
+VAD.
 
 ## Setup
 
@@ -17,7 +19,10 @@ cp .env.example .env
 Set:
 
 ```bash
-OPENAI_API_KEY=...
+SARVAM_API_KEY=...
+OPENAI_API_KEY=sk-or-v1-...          # an OpenRouter key
+OPENAI_MODEL=openrouter/free
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
 PUBLIC_BASE_URL=https://your-ngrok-url.ngrok-free.app
 ```
 
@@ -57,27 +62,78 @@ When audio arrives, the terminal will show lines like:
 The live pipeline is:
 
 ```text
-Vobiz media -> OpenAI Realtime speech-to-speech -> Vobiz playAudio
+Vobiz media ──► Silero VAD ──► Sarvam STT ──► LLM ──► Sarvam TTS ──► Vobiz playAudio
+                 (local)       saaras:v3    OpenRouter   bulbul:v3
 ```
 
-OpenAI Realtime consumes audio directly. Input transcription is enabled for
-debugging in the terminal and `/test` UI, but it is asynchronous guidance rather
-than the exact internal representation used by the model.
+Everything runs at the Vobiz stream rate (16 kHz), which Sarvam STT, Silero and
+Sarvam TTS all take natively, so nothing is resampled in the pipeline.
+
+**Why Silero rather than Sarvam's VAD.** Sarvam's streaming STT can report speech
+start and stop itself, but then every boundary costs a network round trip — on
+the path where latency is audible, deciding the caller has finished and noticing
+they have started talking over the bot. Silero runs on this box in milliseconds,
+and when it reports silence Pipecat tells Sarvam to flush the transcript. Sarvam's
+VAD is switched off so the two never disagree.
+
+**Turn end** is a silence timeout on top of Silero (`USER_TURN_SILENCE_SECS`),
+set explicitly. Pipecat 1.7's default is `LocalSmartTurnAnalyzerV3`, a second ML
+model that would otherwise run on every call deciding when customers are done.
+
+**Barge-in** is on by default, except during the bot's first reply, which can't
+be interrupted — the first seconds of a phone call are the noisiest. The caller
+can still speak first; the bot waits for them. `BARGE_IN=false` makes every reply
+uninterruptible.
+
+## Who speaks first
+
+A CRM call (one with a `call_id`) opens with the `greeting` from the call context,
+spoken the moment the stream starts (after `GREETING_DELAY_SECS`, default 0.6 s):
+"Namaste Ravi ji! Noida Homes ki taraf se call hai…". Every organisation dials from
+the same Vobiz number, so the business name has to be the first thing the customer
+hears. The greeting is added to the LLM context, so the model continues from the
+customer's answer instead of greeting again. The caller is muted until the greeting
+finishes (`MuteUntilFirstBotCompleteUserMuteStrategy`), so a "Hello?" over it cannot
+start a second reply. Without a greeting (browser test client, standalone use) the
+caller speaks first, as before.
+
+## Speaking the caller's language
+
+Sarvam STT runs with language auto-detection, so each transcript is tagged with the
+language the caller used. `CallerLanguageFollower` (in `language.py`) switches the
+bulbul voice to match: immediately on the caller's first utterance, and after two
+consecutive utterances in a new language from then on, so one stray word cannot flip
+it. Hindi and English share the `hi-IN` voice, because the bot writes Hindi in Roman
+script, which an `en-IN` voice would mispronounce. The LLM is told to answer in the
+caller's language and script; it sees their words, so it needs no extra signal.
+
+Supported: Hindi, English, Bengali, Gujarati, Kannada, Malayalam, Marathi, Odia,
+Punjabi, Tamil, Telugu.
 
 ## Environment
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | required | OpenAI API key for Realtime. |
-| `OPENAI_REALTIME_MODEL` | `gpt-realtime-2.1` | OpenAI Realtime speech-to-speech model. |
-| `OPENAI_REALTIME_VOICE` | `marin` | Realtime output voice. |
-| `OPENAI_REALTIME_TRANSCRIPTION_MODEL` | `gpt-realtime-whisper` | Async input transcript model for logs and `/test` UI. |
-| `OPENAI_REALTIME_NOISE_REDUCTION` | `near_field` | Realtime input noise reduction. Set empty to disable. |
-| `OPENAI_REALTIME_VAD_THRESHOLD` | `0.65` | Server VAD activation threshold. Higher values require louder speech and can reduce noise triggers. |
-| `OPENAI_REALTIME_VAD_PREFIX_PADDING_MS` | `500` | Audio included before detected speech. |
-| `OPENAI_REALTIME_VAD_SILENCE_DURATION_MS` | `700` | Silence needed to close a turn. |
-| `OPENAI_MAX_COMPLETION_TOKENS` | `180` | Max output tokens for each Realtime response. |
-| `SYSTEM_PROMPT` | built in | General voice-agent prompt. Defaults to concise Hinglish in Roman script only. Override for your business/personality. |
+| `SARVAM_API_KEY` | required | Sarvam key, used for both STT and TTS. |
+| `SARVAM_MODE` | `transcribe` | saaras:v3 mode: `transcribe`, `translate`, `verbatim`, `translit`, `codemix`. |
+| `SARVAM_TTS_MODEL` | `bulbul:v3` | Sarvam TTS model. |
+| `SARVAM_TTS_VOICE` | `shubh` | Sarvam speaker. |
+| `SARVAM_LANGUAGE` | auto | STT language. Unset/`auto` detects the caller's language per utterance; set e.g. `hi-IN` to pin it. |
+| `SARVAM_TTS_LANGUAGE` | `hi-IN` | Voice language until the caller's language is detected; then it follows the caller (see below). |
+| `SARVAM_TTS_PACE` | `1.05` | Speaking rate. |
+| `SARVAM_TTS_MAX_CHUNK_LENGTH` | `120` | Characters per TTS chunk. |
+| `OPENAI_API_KEY` | required | Key for the gateway in `OPENAI_BASE_URL` — an OpenRouter key by default. |
+| `OPENAI_MODEL` | `openrouter/free` | Model id as the gateway names it. See the note below. |
+| `OPENAI_BASE_URL` | `https://openrouter.ai/api/v1` | Any OpenAI-compatible chat-completions endpoint. |
+| `OPENAI_TEMPERATURE` | `0.4` | LLM temperature. |
+| `OPENAI_MAX_COMPLETION_TOKENS` | `180` | Reply length cap, sent as `max_tokens`. A latency control on a call. |
+| `SYSTEM_PROMPT` | built in | Concise Hinglish in Roman script, no markdown. Per-campaign scripts from the CRM override it. |
+| `VAD_CONFIDENCE` | `0.7` | Silero speech confidence threshold. |
+| `VAD_START_SECS` | `0.2` | Speech needed before a turn starts. |
+| `VAD_STOP_SECS` | `0.2` | Silence before Silero reports the caller stopped. |
+| `VAD_MIN_VOLUME` | `0.6` | Raise if line noise keeps interrupting the bot. |
+| `USER_TURN_SILENCE_SECS` | `0.6` | Pause allowed before the turn ends. Bot answers after ≈ `VAD_STOP_SECS` + this. |
+| `BARGE_IN` | `true` | Caller can interrupt the bot (never its first reply). `false` = never. |
 | `PUBLIC_BASE_URL` | derived from request | Public HTTPS base URL used to build the Vobiz WebSocket URL. Use this with ngrok/cloudflared. |
 | `VOBIZ_WS_URL` | derived from `PUBLIC_BASE_URL` | Full `wss://.../vobiz/ws` override. |
 | `VOBIZ_STREAM_CONTENT_TYPE` | `audio/x-l16;rate=16000` | Vobiz stream format. Also accepts `audio/x-mulaw;rate=8000`. |
@@ -86,11 +142,17 @@ than the exact internal representation used by the model.
 | `INTERNAL_API_TOKEN` | unset | Shared secret for the CRM's `/api/v1/internal/*` endpoints. |
 | `MAX_CONCURRENT_CALLS` | `10` | Calls this process accepts before refusing. Measure it; see Concurrency. |
 | `CALL_SUMMARY_ENABLED` | `true` | Summarise the transcript after the call ends. |
-| `CALL_SUMMARY_MODEL` | `gpt-4o-mini` | Model used for the post-call summary. |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Gateway for the summary call. |
+| `CALL_SUMMARY_MODEL` | `OPENAI_MODEL` | Model for the post-call summary, on the same gateway. |
 
-Legacy Sarvam variables may still exist in older `.env` files, but they are not
-used by the active OpenAI Realtime pipeline.
+**About `openrouter/free`.** It routes each request to a randomly chosen free
+model, and free models are limited to **20 requests/minute and 50/day** (1,000/day
+once $10 of credits have been bought). Every reply in a call is one request, so it
+is fine for trying the agent and not for running a campaign: at 20/minute the
+whole process can sustain about two live calls, and 50/day is two or three calls.
+A rate-limited reply is silence on the line. Because the model changes from turn to
+turn, the persona and the Hinglish can also drift mid-call. For production, name
+one fast, non-reasoning model from <https://openrouter.ai/models> — reasoning
+models think before the first word, and on a phone call that is dead air.
 
 ## Routes
 
@@ -131,8 +193,8 @@ nothing is reported and the call is served normally.
 
 ## Concurrency
 
-Each call gets its own `CallSession`, its own Pipecat pipeline and its own
-OpenAI Realtime session. No call state lives in a module-level variable, so
+Each call gets its own `CallSession`, its own Pipecat pipeline, its own Sarvam
+STT and TTS sockets and its own Silero instance. No call state lives in a module-level variable, so
 scaling out is just running more replicas behind a load balancer:
 
 ```text
@@ -148,8 +210,9 @@ refusing the 21st call cleanly is better than degrading twenty live conversation
 your hardware and plan, and only load testing finds it:
 
 ```text
-Pipecat CPU/memory per pipeline
-OpenAI Realtime rate + concurrency limits
+Pipecat CPU/memory per pipeline (Silero runs on CPU, per call)
+LLM gateway rate limit — 20 requests/minute on openrouter/free
+Sarvam STT/TTS concurrent-stream limits on your plan
 Vobiz calls-per-second and concurrent-call limits
 ```
 
@@ -170,4 +233,3 @@ file. If opened from disk, browser URL detection may not know the server host.
 Click `Start` to send a Vobiz-like `start` event and continuous 20 ms
 `audio/x-l16` microphone frames to `/vobiz/ws`. The page does not use
 client-side VAD; it streams until you click `Stop`.
-# pipecat_sarvam

@@ -11,7 +11,7 @@ anything about a call it is not carrying.
 `CallRegistry` is *per process*. It is the one piece of shared state, and it exists
 to answer a single question: may this process accept one more call? Without it, a
 campaign that dials 500 leads gets 500 accepted WebSockets, 500 Pipecat pipelines
-and 500 OpenAI Realtime sessions on one box, and every one of them degrades. It is
+and 1,000 Sarvam sockets on one box, and every one of them degrades. It is
 better to refuse the 21st call cleanly than to ruin twenty conversations.
 
 The capacity number itself is not knowledge this code has. `MAX_CONCURRENT_CALLS`
@@ -45,6 +45,9 @@ class CallSession:
     #: Filled from the CRM's call context on connect, so the AI can greet the
     #: person by name and the transcript is attributable when it is reviewed.
     customer_name: str | None = None
+    #: The voice language the caller settled on (e.g. "ta-IN"), as detected by
+    #: Sarvam STT. Reported with the outcome.
+    language: str | None = None
     started_at: float = field(default_factory=time.time)
     answered_at: float | None = None
     turns: list[TranscriptTurn] = field(default_factory=list)
@@ -53,8 +56,10 @@ class CallSession:
         cleaned = (text or "").strip()
         if not cleaned:
             return
-        # Realtime emits assistant text in fragments; joining them into the
-        # previous turn keeps the transcript readable instead of one word a line.
+        # A reply can arrive as several LLM responses (an interruption, a retry)
+        # and a customer's sentence as several final transcripts when they pause
+        # mid-thought. Joining consecutive turns from the same speaker keeps the
+        # transcript readable instead of one fragment a line.
         if self.turns and self.turns[-1].role == role:
             self.turns[-1].text = f"{self.turns[-1].text} {cleaned}".strip()
             return

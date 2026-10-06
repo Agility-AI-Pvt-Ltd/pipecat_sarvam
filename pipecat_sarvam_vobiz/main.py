@@ -106,8 +106,8 @@ async def vobiz_answer(request: Request) -> Response:
     """Vobiz asks what to do with an answered call. Admission control lives here.
 
     This is the earliest point at which a call can be refused, and the last point
-    at which refusing is cheap: after this the stream opens and an OpenAI Realtime
-    session is created.
+    at which refusing is cheap: after this the stream opens and a pipeline with
+    live Sarvam STT/TTS sockets and an LLM client is built for it.
     """
     call_id = (request.query_params.get("call_id") or "").strip() or None
     try:

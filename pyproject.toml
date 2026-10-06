@@ -1,12 +1,18 @@
 [project]
 name = "pipecat-sarvam-vobiz"
 version = "0.1.0"
-description = "FastAPI voice agent using Vobiz realtime audio streams, Pipecat, and OpenAI Realtime."
+description = "FastAPI voice agent: Vobiz audio streams, Sarvam STT/TTS, Silero VAD, and an OpenAI-compatible LLM via Pipecat."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
-    "pipecat-ai[sarvam]>=0.0.108",
+    # `silero` (local VAD via onnxruntime) and `openai` (the client the OpenRouter
+    # service is built on) are declared because the code imports them. In 1.7
+    # both extras are empty — their packages are base dependencies — so this
+    # changes nothing installed today; it keeps the image correct if Pipecat moves
+    # them back behind extras, as it did before 1.x.
+    # Floor at 1.7: the turn-strategy and mute-strategy APIs used in agent.py.
+    "pipecat-ai[sarvam,silero,openai]>=1.7,<2",
     "python-dotenv>=1.0.1",
 ]
 

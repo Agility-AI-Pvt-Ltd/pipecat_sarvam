@@ -11,3 +11,11 @@ dist/
 .pem
 futurexfeazer.pem
 for-voice.pem
+/Users/krishnakumar/Workspace/AGILITY/voice-agent/tools/pipecat_sarvam/graphify-out
+*graphify-out
+
+# Any .env variant (backups, per-host copies) carries the same secrets.
+.env.*
+!.env.example
+*.pem
+scripts/out/
