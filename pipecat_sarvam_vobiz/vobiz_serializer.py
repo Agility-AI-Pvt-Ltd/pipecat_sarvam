@@ -88,6 +88,11 @@ class VobizFrameSerializer(FrameSerializer):
             payload = await self._serialize_audio(frame)
             if not payload:
                 return None
+            logger.debug(
+                "Sending Vobiz playAudio bytes={} stream={}",
+                len(payload),
+                (self._stream_id or "unknown")[:8],
+            )
             answer: dict[str, Any] = {
                 "event": "playAudio",
                 "media": {
@@ -121,6 +126,10 @@ class VobizFrameSerializer(FrameSerializer):
             return None
 
         event = message.get("event")
+        if event in {"stop", "hangup", "disconnect"}:
+            logger.info("Vobiz stream ended with event={}", event)
+            return EndFrame()
+
         if event == "start":
             start = message.get("start") or {}
             media_format = start.get("mediaFormat") or {}

@@ -39,3 +39,7 @@ class SarvamV3TTSService(SarvamTTSService):
 
         logger.debug(f"Config being sent is {config_data}")
         await self._websocket.send(json.dumps({"type": "config", "data": config_data}))
+
+    async def _send_text(self, text: str):
+        logger.info("Sarvam TTS request chars={}", len(text))
+        await super()._send_text(text)

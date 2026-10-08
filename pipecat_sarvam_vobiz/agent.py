@@ -286,27 +286,72 @@ async def run_vobiz_agent(
     running: dict[str, PipelineTask] = {}
     #: Holds the greeting task so it is not garbage-collected mid-flight.
     background: set[asyncio.Task] = set()
+    tts_ready = asyncio.Event()
 
     async def speak_greeting() -> None:
         # A beat after pickup, so the first syllable is not lost while the phone
         # is still moving to the ear.
         await asyncio.sleep(settings.greeting_delay_secs)
+        try:
+            await asyncio.wait_for(tts_ready.wait(), timeout=10.0)
+        except TimeoutError:
+            print(
+                f"[greeting] TTS was not ready call={session.call_id or 'none'}",
+                flush=True,
+            )
+            return
         task = running.get("task")
         if task is None or not greeting:
+            print(
+                f"[greeting] not queued call={session.call_id or 'none'} "
+                f"task={'ready' if task else 'missing'} text={'ready' if greeting else 'missing'}",
+                flush=True,
+            )
             return
-        session.record("assistant", greeting)
-        # append_to_context: the LLM sees its own opening line, so it continues
-        # the conversation instead of greeting a second time.
-        await task.queue_frames([TTSSpeakFrame(greeting, append_to_context=True)])
+        try:
+            print(
+                f"[greeting] queueing call={session.call_id or 'none'} "
+                f"chars={len(greeting)}",
+                flush=True,
+            )
+            # append_to_context: the LLM sees its own opening line, so it continues
+            # the conversation instead of greeting a second time.
+            await task.queue_frames([TTSSpeakFrame(greeting, append_to_context=True)])
+            session.record("assistant", greeting)
+            print(
+                f"[greeting] queued call={session.call_id or 'none'}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"[greeting] queue failed call={session.call_id or 'none'} "
+                f"error={type(exc).__name__}: {exc}",
+                flush=True,
+            )
 
     async def on_stream_start(info: dict) -> None:
         session.stream_id = info.get("stream_id")
         session.vobiz_call_id = info.get("call_id")
         session.answered_at = time.time()
+        print(
+            f"[greeting] stream ready call={session.call_id or 'none'} "
+            f"greeting={'ready' if greeting else 'not configured'}",
+            flush=True,
+        )
         if greeting:
             pending = asyncio.create_task(speak_greeting())
             background.add(pending)
-            pending.add_done_callback(background.discard)
+
+            def finish_greeting(completed: asyncio.Task) -> None:
+                background.discard(completed)
+                if not completed.cancelled() and completed.exception() is not None:
+                    print(
+                        f"[greeting] task failed call={session.call_id or 'none'} "
+                        f"error={completed.exception()}",
+                        flush=True,
+                    )
+
+            pending.add_done_callback(finish_greeting)
         if session.call_id and bcrm.configured:
             await asyncio.to_thread(bcrm.report_answered, session.call_id)
 
@@ -336,6 +381,15 @@ async def run_vobiz_agent(
     stt = build_sarvam_stt(settings)
     llm = build_llm(settings, system_prompt=system_prompt)
     tts = build_sarvam_tts(settings)
+
+    @tts.event_handler("on_connected")
+    async def on_tts_connected(_service: SarvamTTSService) -> None:
+        tts_ready.set()
+        print(
+            f"[tts] Sarvam connected call={session.call_id or 'none'}",
+            flush=True,
+        )
+
     context = LLMContext()
     context_aggregator = build_context_aggregator(
         settings, context, greeting_first=bool(greeting)
