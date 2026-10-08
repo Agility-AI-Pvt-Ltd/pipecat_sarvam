@@ -10,12 +10,12 @@ from pydantic import Field
 
 from pipecat.audio.utils import create_stream_resampler, pcm_to_ulaw, ulaw_to_pcm
 from pipecat.frames.frames import (
-    AudioRawFrame,
     CancelFrame,
     EndFrame,
     Frame,
     InputAudioRawFrame,
     InterruptionFrame,
+    OutputAudioRawFrame,
     OutputTransportMessageFrame,
     OutputTransportMessageUrgentFrame,
     StartFrame,
@@ -30,7 +30,6 @@ class VobizFrameSerializer(FrameSerializer):
         stream_sample_rate: int = 16000
         stream_encoding: str = "audio/x-l16"
         sample_rate: int | None = None
-        include_stream_id_on_play_audio: bool = True
         resampler_clear_after_secs: float = Field(default=10.0, ge=0.0)
 
     def __init__(
@@ -84,26 +83,24 @@ class VobizFrameSerializer(FrameSerializer):
                 return json.dumps({"event": "clearAudio", "streamId": self._stream_id})
             return None
 
-        if isinstance(frame, AudioRawFrame):
+        if isinstance(frame, OutputAudioRawFrame):
             payload = await self._serialize_audio(frame)
             if not payload:
                 return None
             logger.debug(
-                "Sending Vobiz playAudio bytes={} stream={}",
-                len(payload),
-                (self._stream_id or "unknown")[:8],
+                "Sending Vobiz playAudio bytes={} sample_rate={} encoding={}",
+                len(frame.audio),
+                frame.sample_rate,
+                self._vobiz_encoding,
             )
-            answer: dict[str, Any] = {
+            return json.dumps({
                 "event": "playAudio",
                 "media": {
                     "contentType": self._vobiz_encoding,
-                    "sampleRate": self._vobiz_sample_rate,
+                    "sampleRate": frame.sample_rate,
                     "payload": payload,
                 },
-            }
-            if self._params.include_stream_id_on_play_audio and self._stream_id:
-                answer["streamId"] = self._stream_id
-            return json.dumps(answer)
+            })
 
         if isinstance(frame, (OutputTransportMessageFrame, OutputTransportMessageUrgentFrame)):
             if self.should_ignore_frame(frame):
@@ -192,15 +189,16 @@ class VobizFrameSerializer(FrameSerializer):
         logger.warning("Unsupported Vobiz input audio encoding: {}", self._vobiz_encoding)
         return b""
 
-    async def _serialize_audio(self, frame: AudioRawFrame) -> str:
+    async def _serialize_audio(self, frame: OutputAudioRawFrame) -> str:
         if self._vobiz_encoding == "audio/x-mulaw":
             audio = await pcm_to_ulaw(
                 frame.audio, frame.sample_rate, self._vobiz_sample_rate, self._output_resampler
             )
         elif self._vobiz_encoding == "audio/x-l16":
-            audio = await self._output_resampler.resample(
-                frame.audio, frame.sample_rate, self._vobiz_sample_rate
-            )
+            # Pipecat's output transport already emits the configured Vobiz
+            # sample rate. Preserve those PCM bytes exactly; resampling again
+            # can corrupt packet timing and makes Vobiz reject playback.
+            audio = frame.audio
         else:
             logger.warning("Unsupported Vobiz output audio encoding: {}", self._vobiz_encoding)
             return ""
