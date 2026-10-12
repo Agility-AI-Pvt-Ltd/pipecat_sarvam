@@ -36,6 +36,7 @@ class VobizFrameSerializer(FrameSerializer):
         self,
         params: InputParams | None = None,
         on_start: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        on_media: Callable[[], None] | None = None,
     ):
         """`on_start` fires once, when Vobiz sends the `start` event.
 
@@ -48,6 +49,7 @@ class VobizFrameSerializer(FrameSerializer):
         super().__init__(params=params)
         self._params: VobizFrameSerializer.InputParams = params
         self._on_start = on_start
+        self._on_media = on_media
         self._stream_id: str | None = None
         self._call_id: str | None = None
         self._account_id: str | None = None
@@ -172,6 +174,8 @@ class VobizFrameSerializer(FrameSerializer):
             audio = await self._deserialize_audio(payload)
             if not audio:
                 return None
+            if self._on_media is not None:
+                self._on_media()
             return InputAudioRawFrame(audio=audio, num_channels=1, sample_rate=self._sample_rate)
 
         logger.debug("Ignoring Vobiz event: {}", event)

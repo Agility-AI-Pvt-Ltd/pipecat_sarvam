@@ -25,6 +25,10 @@ from dataclasses import dataclass, field
 OUTCOMES = (
     "interested",
     "not_interested",
+    # Said they had no time rather than no interest. Worth its own value: the CRM
+    # still sends them the details on WhatsApp, which it does not do for someone
+    # who declined.
+    "customer_busy",
     "callback_requested",
     "site_visit_scheduled",
     "wrong_number",
@@ -56,8 +60,10 @@ _PROMPT = (
     "customer wants and what was agreed.\n"
     "requirements must be an object with keys budget, bhk, locality, move_in, purpose. "
     "Each value is a short English phrase in the customer's own terms (for example "
-    "\"80 lakh to 1 crore\", \"3 BHK\", \"Sector 62, Noida\", \"within 3 months\", "
-    "\"buy\" or \"rent\"), or null if the customer did not say it. Never guess.\n"
+    '"80 lakh to 1 crore", "3 BHK", "Sector 62, Noida", "within 3 months", '
+    '"buy" or "rent"), or null if the customer did not say it. Never guess.\n'
+    "If the customer said they were busy, driving or in a meeting and the call ended "
+    "there, use outcome customer_busy and next_action send_details.\n"
     "If the call had no real conversation, use outcome no_meaningful_conversation, "
     "next_action none and all requirements null."
 )

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+from contextlib import asynccontextmanager
 from html import escape
 from pathlib import Path
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -21,14 +24,48 @@ logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.I
 logger.remove()
 logger.add(lambda message: print(message, end=""), level=settings.log_level.upper())
 
-app = FastAPI(title="Pipecat Vobiz Voice Agent")
-STATIC_DIR = Path(__file__).resolve().parent / "static"
-
 #: One per process. This is the only shared mutable state in the service, and it
 #: exists solely to bound how many calls this replica accepts. Everything else
 #: about a call lives on its own WebSocket, which is what makes scaling out a
 #: matter of running more of these.
-registry = CallRegistry(max_concurrent=settings.max_concurrent_calls)
+registry = CallRegistry(
+    max_concurrent=settings.max_concurrent_calls,
+    connect_idle_seconds=settings.call_connect_idle_secs,
+    media_idle_seconds=settings.call_media_idle_secs,
+)
+
+
+async def _reap_idle_sessions() -> None:
+    """Close sockets that never started, or went silent after hangup."""
+    while True:
+        await asyncio.sleep(5)
+        for token, closer in registry.pop_idle():
+            print(f"[vobiz] idle-reap token={token}", flush=True)
+            if closer is not None:
+                try:
+                    await closer()
+                except Exception as exc:
+                    logger.warning("Idle close failed for {}: {}", token, exc)
+                    registry.release(token)
+            else:
+                registry.release(token)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    task = asyncio.create_task(_reap_idle_sessions())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(title="Pipecat Vobiz Voice Agent", lifespan=lifespan)
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 def _websocket_url(request: Request, settings: Settings, call_id: str | None) -> str:
@@ -129,31 +166,64 @@ async def vobiz_answer(request: Request) -> Response:
     )
 
 
+def _hangup_idents(request: Request, payload: bytes) -> list[str]:
+    idents: list[str] = []
+    hinted = (request.query_params.get("call_id") or "").strip()
+    if hinted:
+        idents.append(hinted)
+    text = payload.decode("utf-8", errors="replace") if payload else ""
+    if text:
+        try:
+            body = json.loads(text)
+        except json.JSONDecodeError:
+            body = {}
+        if isinstance(body, dict):
+            for key in ("call_id", "CallUUID", "RequestUUID", "callId", "request_uuid"):
+                value = str(body.get(key) or "").strip()
+                if value:
+                    idents.append(value)
+    return idents
+
+
 @app.api_route("/vobiz/hangup", methods=["GET", "POST"])
 async def vobiz_hangup(request: Request) -> dict[str, str]:
-    """Vobiz's hangup notification.
+    """Vobiz hangup: drop the media socket so the capacity slot is freed.
 
-    Logged only. The authoritative hangup goes to the CRM, which is what updates
-    the call record and wakes the Temporal workflow — this service has no business
-    owning that fact.
+    The CRM still owns the call record. This only closes a stream that would
+    otherwise sit open on the public tunnel after the phone has already dropped.
     """
     payload = await request.body()
     printable = payload.decode("utf-8", errors="replace") if payload else ""
     print(f"[vobiz] hangup {printable}", flush=True)
+    closer = registry.closer_for(*_hangup_idents(request, payload))
+    if closer is not None:
+        try:
+            await closer()
+        except Exception as exc:
+            logger.warning("Hangup close failed: {}", exc)
     return {"status": "ok"}
 
 
 @app.websocket("/vobiz/ws", name="vobiz_ws")
 async def vobiz_ws(websocket: WebSocket) -> None:
     call_id = (websocket.query_params.get("call_id") or "").strip() or None
-    session = CallSession(call_id=call_id)
-    token = call_id or f"ws-{id(websocket)}"
+    session = CallSession(call_id=call_id, counts_toward_capacity=bool(call_id))
+    token = call_id or f"probe-{id(websocket)}"
 
+    async def disconnect() -> None:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+    session.disconnect = disconnect
+    session.on_provider_id = lambda provider_id: registry.bind_vobiz_id(token, provider_id)
     await websocket.accept()
     registry.activate(token, session)
     print(
         f"[vobiz] websocket connected call_id={call_id or 'none'} "
-        f"active={registry.snapshot()['active_calls']}",
+        f"active={registry.snapshot()['active_calls']} "
+        f"counted={session.counts_toward_capacity}",
         flush=True,
     )
     try:

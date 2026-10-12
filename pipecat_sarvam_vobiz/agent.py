@@ -61,6 +61,7 @@ except ImportError:  # pragma: no cover - compatibility with older Pipecat relea
 
 from pipecat_sarvam_vobiz import outcome as outcome_module
 from pipecat_sarvam_vobiz.bcrm_client import BcrmClient
+from pipecat_sarvam_vobiz.call_closer import CallCloser
 from pipecat_sarvam_vobiz.call_session import CallSession
 from pipecat_sarvam_vobiz.language import CallerLanguageFollower
 from pipecat_sarvam_vobiz.sarvam_tts import SarvamV3TTSService
@@ -332,7 +333,9 @@ async def run_vobiz_agent(
     async def on_stream_start(info: dict) -> None:
         session.stream_id = info.get("stream_id")
         session.vobiz_call_id = info.get("call_id")
-        session.answered_at = time.time()
+        session.note_stream()
+        if session.vobiz_call_id and session.on_provider_id:
+            session.on_provider_id(session.vobiz_call_id)
         print(
             f"[greeting] stream ready call={session.call_id or 'none'} "
             f"greeting={'ready' if greeting else 'not configured'}",
@@ -363,6 +366,7 @@ async def run_vobiz_agent(
             sample_rate=rate,
         ),
         on_start=on_stream_start,
+        on_media=session.touch,
     )
 
     transport = FastAPIWebsocketTransport(
@@ -378,8 +382,15 @@ async def run_vobiz_agent(
         ),
     )
 
+    async def hang_up() -> None:
+        """Ask the CRM to drop the line. Blocking urllib, so off the event loop:
+        other calls on this replica are still streaming audio on it."""
+        if session.call_id and bcrm.configured:
+            await asyncio.to_thread(bcrm.request_hangup, session.call_id)
+
     stt = build_sarvam_stt(settings)
     llm = build_llm(settings, system_prompt=system_prompt)
+    closer = CallCloser(on_close=hang_up, session=session)
     tts = build_sarvam_tts(settings)
 
     @tts.event_handler("on_connected")
@@ -391,20 +402,19 @@ async def run_vobiz_agent(
         )
 
     context = LLMContext()
-    context_aggregator = build_context_aggregator(
-        settings, context, greeting_first=bool(greeting)
-    )
+    context_aggregator = build_context_aggregator(settings, context, greeting_first=bool(greeting))
 
     pipeline = Pipeline(
         [
             transport.input(),
             stt,
-            CallerLanguageFollower(
-                initial=settings.sarvam_tts_language, tts=tts, session=session
-            ),
+            CallerLanguageFollower(initial=settings.sarvam_tts_language, tts=tts, session=session),
             TerminalTranscriptLogger(source="sarvam", session=session),
             context_aggregator.user(),
             llm,
+            # Before the logger and the TTS: the end-call marker is stripped here,
+            # so neither the stored transcript nor the speaker ever sees it.
+            closer,
             TerminalOpenAILogger(session=session),
             tts,
             transport.output(),
@@ -446,9 +456,7 @@ async def report_call_outcome(settings: Settings, session: CallSession) -> None:
         print("[bcrm] no call_id on this stream; outcome not reported", flush=True)
         return
 
-    client = BcrmClient(
-        base_url=settings.bcrm_base_url, token=settings.internal_api_token
-    )
+    client = BcrmClient(base_url=settings.bcrm_base_url, token=settings.internal_api_token)
     if not client.configured:
         return
 

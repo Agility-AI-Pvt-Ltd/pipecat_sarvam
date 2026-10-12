@@ -163,6 +163,25 @@ models think before the first word, and on a phone call that is dead air.
 - `POST /vobiz/hangup` - logs Vobiz hangup webhook payload.
 - `WS /vobiz/ws` - Vobiz realtime audio stream endpoint.
 
+## Ending a call
+
+The assistant can hang up. It finishes its last message with `[[END_CALL]]`;
+`call_closer.py` strips the marker before anything is spoken, waits for the line to
+finish playing, asks the CRM to drop the call
+(`POST /api/v1/internal/calls/{id}/hangup`) and then ends the pipeline.
+
+It is used when the customer says they are busy or not interested, on a wrong
+number, and after a normal goodbye. Without it the AI falls silent and the call runs
+to its duration cap — ten minutes of dead line for somebody who said they had no
+time.
+
+The marker must match `END_CALL_MARKER` in the CRM's
+`app/modules/calls/enquiry_policy.py`, which is what puts it in the prompt. A drift
+means the marker is never recognised, so the call ends at its timeout as it used to
+rather than mid-sentence. The stream filter is pure and unit-tested in
+`tests/test_call_closer.py`; a marker split across streamed tokens (`[[END`,
+`_CALL]]`) is the case that matters.
+
 ## Where this service sits
 
 This is one of two applications. It owns the **live call** and nothing else:

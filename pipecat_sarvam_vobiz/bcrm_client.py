@@ -65,6 +65,17 @@ class BcrmClient:
         """
         return self._post(f"/api/v1/internal/calls/{call_id}/answered", {}) is not None
 
+    def request_hangup(self, call_id: str) -> bool:
+        """Ask the CRM to drop the line, because the conversation is finished.
+
+        The hangup itself belongs to the CRM: the provider credentials are there,
+        and this service keeps knowing only about the call it is on. Best-effort
+        like everything else here — a refused request leaves the call to its own
+        duration cap, which is where it would have ended anyway before this
+        existed.
+        """
+        return self._post(f"/api/v1/internal/calls/{call_id}/hangup", {}) is not None
+
     def report_outcome(
         self,
         call_id: str,

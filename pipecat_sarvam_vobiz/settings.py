@@ -71,6 +71,10 @@ class Settings:
     #: by load testing, not by guessing — see CallRegistry. Zero disables the
     #: ceiling, which is only sensible for local testing.
     max_concurrent_calls: int
+    #: Close a WebSocket that never received Vobiz's `start` event.
+    call_connect_idle_secs: int
+    #: Close a stream that has gone silent (typical after PSTN hangup).
+    call_media_idle_secs: int
     #: Post-call summarisation. Off when no OpenAI key is available; the CRM then
     #: receives the transcript without an interpretation of it.
     call_summary_enabled: bool
@@ -112,14 +116,17 @@ def load_settings() -> Settings:
                 "Roman script only, for example: 'Haan, samajh gaya. Aap thoda aur bata sakte ho?' "
                 "Do not use Devanagari or pure English unless the caller explicitly asks for a "
                 "different language or script. Never use markdown, lists, emoji or symbols: "
-                "everything you write is read aloud."
+                "everything you write is read aloud. "
+                "If the caller says they are busy, driving or not interested, do not ask anything "
+                "else and do not try to change their mind: say only a short thank you and end the "
+                "call. To end a call, finish that last message with [[END_CALL]] on the end, for "
+                'example "Ji bilkul, thank you! [[END_CALL]]". The caller never hears it; it tells '
+                "the system to hang up."
             ),
         ),
         public_base_url=os.getenv("PUBLIC_BASE_URL"),
         vobiz_ws_url=os.getenv("VOBIZ_WS_URL"),
-        vobiz_stream_content_type=os.getenv(
-            "VOBIZ_STREAM_CONTENT_TYPE", "audio/x-l16;rate=16000"
-        ),
+        vobiz_stream_content_type=os.getenv("VOBIZ_STREAM_CONTENT_TYPE", "audio/x-l16;rate=16000"),
         sarvam_mode=os.getenv("SARVAM_MODE", "transcribe"),
         sarvam_language=os.getenv("SARVAM_LANGUAGE"),
         sarvam_tts_model=os.getenv("SARVAM_TTS_MODEL", "bulbul:v3"),
@@ -139,6 +146,8 @@ def load_settings() -> Settings:
         bcrm_base_url=os.getenv("BCRM_BASE_URL"),
         internal_api_token=os.getenv("INTERNAL_API_TOKEN"),
         max_concurrent_calls=int(os.getenv("MAX_CONCURRENT_CALLS", "10")),
+        call_connect_idle_secs=int(os.getenv("CALL_CONNECT_IDLE_SECS", "30")),
+        call_media_idle_secs=int(os.getenv("CALL_MEDIA_IDLE_SECS", "45")),
         call_summary_enabled=_bool_env("CALL_SUMMARY_ENABLED", True),
         call_summary_model=os.getenv("CALL_SUMMARY_MODEL") or openai_model,
     )
